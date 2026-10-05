@@ -1,0 +1,52 @@
+@page "/"
+
+<PageTitle>DashTudo · Seus dados em gráficos e insights</PageTitle>
+
+<section class="container hero">
+    <div class="hero-text">
+        <h4>Ferramentas e recursos do DashTudo</h4>
+        <h1>Insira dados, tenha gráficos essenciais e receba insights automáticos gerados por IA.</h1>
+        <p class="muted">
+            Envie planilhas (.csv, .xlsx), textos ou PDFs, monte gráficos em segundos e peça à IA resumos,
+            insights e relatórios completos. Tudo fica salvo no seu histórico para consultar depois.
+        </p>
+        <div class="hero-actions">
+            <AuthorizeView>
+                <Authorized>
+                    <a href="dashboard" class="btn btn-primary">Ir para o dashboard</a>
+                    <a href="historico" class="btn btn-outline">Ver histórico</a>
+                </Authorized>
+                <NotAuthorized>
+                    <a href="criarconta" class="btn btn-primary">Começar grátis</a>
+                    <a href="login" class="btn btn-outline">Já tenho conta</a>
+                </NotAuthorized>
+            </AuthorizeView>
+        </div>
+    </div>
+    <div class="hero-image">
+        <img src="img/dashtudo3-nobg.png" alt="Ilustração de dashboards" />
+    </div>
+</section>
+
+<section class="container features">
+    <div class="feature card">
+        <div class="feature-icon">📁</div>
+        <h3>Qualquer formato</h3>
+        <p class="muted">CSV (vírgula ou ponto e vírgula), Excel, PDF, TXT ou dados colados direto do navegador.</p>
+    </div>
+    <div class="feature card">
+        <div class="feature-icon">📊</div>
+        <h3>Gráficos sob medida</h3>
+        <p class="muted">Barras, linhas, área, pizza e rosca, com agregações (soma, média, contagem) e agrupamento por data.</p>
+    </div>
+    <div class="feature card">
+        <div class="feature-icon">🤖</div>
+        <h3>Insights com IA</h3>
+        <p class="muted">Resumo executivo, anomalias, relatório completo ou perguntas livres sobre os seus dados.</p>
+    </div>
+    <div class="feature card">
+        <div class="feature-icon">🕓</div>
+        <h3>Histórico</h3>
+        <p class="muted">Cada upload, gráfico e relatório fica salvo na sua conta para voltar quando quiser.</p>
+    </div>
+</section>

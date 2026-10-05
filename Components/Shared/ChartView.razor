@@ -1,0 +1,53 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="chart-box">
+    @if (Data is null || Data.Labels.Length == 0)
+    {
+        <div class="chart-empty muted">Selecione as colunas para montar o gráfico.</div>
+    }
+    <canvas @ref="canvas" style="@(Data is null || Data.Labels.Length == 0 ? "display:none" : "")"></canvas>
+</div>
+
+@code {
+    private ElementReference canvas;
+    private ChartData? rendered;
+    private string? renderedKey;
+
+    [Parameter] public ChartData? Data { get; set; }
+    [Parameter] public ChartSettings Settings { get; set; } = new();
+    [Parameter] public Func<string, string> Label { get; set; } = s => s;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (Data is null || Data.Labels.Length == 0) return;
+        var key = $"{Settings.Kind}|{Settings.Title}|{Settings.XColumn}|{string.Join(',', Settings.YColumns.Select(Label))}";
+        if (ReferenceEquals(Data, rendered) && key == renderedKey) return;
+        rendered = Data;
+        renderedKey = key;
+
+        var spec = new
+        {
+            kind = char.ToLowerInvariant(Settings.Kind.ToString()[0]) + Settings.Kind.ToString()[1..],
+            title = Settings.Title,
+            labels = Data.Labels,
+            series = Data.Series.Select(s => new { label = Label(s.Label), values = s.Values }),
+            xLabel = Settings.XColumn is null ? "" : Label(Settings.XColumn),
+            yLabel = Data.Series.Count == 1 ? Label(Data.Series[0].Label) : "",
+        };
+        await JS.InvokeVoidAsync("dashtudo.renderChart", canvas, spec);
+    }
+
+    public async Task ExportPngAsync(string fileName) => await JS.InvokeVoidAsync("dashtudo.exportChart", canvas, fileName);
+
+    public async ValueTask DisposeAsync()
+    {
+        // Durante o pré-render (SSR) não existe JS; só destrói se o gráfico chegou a ser desenhado.
+        if (rendered is null) return;
+        try
+        {
+            await JS.InvokeVoidAsync("dashtudo.destroyChart", canvas);
+        }
+        catch (JSDisconnectedException) { }
+    }
+}

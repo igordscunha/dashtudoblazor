@@ -1,0 +1,122 @@
+@page "/criarconta"
+@attribute [ExcludeFromInteractiveRouting]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject NavigationManager Navigation
+
+<PageTitle>Criar conta · DashTudo</PageTitle>
+
+<section class="container page auth-page">
+    <div class="card auth-card wide">
+        <h1>Criar conta</h1>
+        <p class="muted">Grátis. Seus uploads ficam salvos no seu histórico.</p>
+
+        @if (errors.Count > 0)
+        {
+            <div class="alert alert-error">
+                @foreach (var e in errors)
+                {
+                    <div>@e</div>
+                }
+            </div>
+        }
+
+        <EditForm Model="Input" method="post" OnValidSubmit="RegisterUser" FormName="register" Enhance="false">
+            <DataAnnotationsValidator />
+            <div class="grid-2">
+                <div>
+                    <label for="firstName">Nome</label>
+                    <InputText id="firstName" @bind-Value="Input.FirstName" autocomplete="given-name" />
+                    <ValidationMessage For="() => Input.FirstName" />
+                </div>
+                <div>
+                    <label for="lastName">Sobrenome</label>
+                    <InputText id="lastName" @bind-Value="Input.LastName" autocomplete="family-name" />
+                    <ValidationMessage For="() => Input.LastName" />
+                </div>
+            </div>
+
+            <label for="birthDate">Data de nascimento (opcional)</label>
+            <InputDate id="birthDate" @bind-Value="Input.BirthDate" />
+
+            <label for="email">Email</label>
+            <InputText id="email" type="email" @bind-Value="Input.Email" autocomplete="email" />
+            <ValidationMessage For="() => Input.Email" />
+
+            <div class="grid-2">
+                <div>
+                    <label for="password">Senha</label>
+                    <InputText id="password" type="password" @bind-Value="Input.Password" autocomplete="new-password" />
+                    <ValidationMessage For="() => Input.Password" />
+                </div>
+                <div>
+                    <label for="confirm">Confirmar senha</label>
+                    <InputText id="confirm" type="password" @bind-Value="Input.ConfirmPassword" autocomplete="new-password" />
+                    <ValidationMessage For="() => Input.ConfirmPassword" />
+                </div>
+            </div>
+            <p class="small muted">Mínimo de 8 caracteres, com letras minúsculas e números.</p>
+
+            <button type="submit" class="btn btn-primary btn-block">Cadastrar</button>
+        </EditForm>
+
+        <p class="small center">Já tem conta? <a href="login">Entrar.</a></p>
+    </div>
+</section>
+
+@code {
+    private readonly List<string> errors = [];
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    protected override void OnInitialized() => Input ??= new();
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    private async Task RegisterUser()
+    {
+        var email = Input.Email.Trim();
+        var user = new ApplicationUser
+        {
+            UserName = email,
+            Email = email,
+            FirstName = Input.FirstName.Trim(),
+            LastName = Input.LastName.Trim(),
+            BirthDate = Input.BirthDate,
+        };
+
+        var result = await UserManager.CreateAsync(user, Input.Password);
+        if (!result.Succeeded)
+        {
+            errors.AddRange(result.Errors.Select(IdentityErrorsPt.Translate));
+            return;
+        }
+
+        await SignInManager.SignInAsync(user, isPersistent: true);
+        Navigation.NavigateTo(Login.SafeReturnUrl(ReturnUrl), forceLoad: true);
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "Informe o nome."), StringLength(100)]
+        public string FirstName { get; set; } = "";
+
+        [Required(ErrorMessage = "Informe o sobrenome."), StringLength(100)]
+        public string LastName { get; set; } = "";
+
+        public DateOnly? BirthDate { get; set; }
+
+        [Required(ErrorMessage = "Informe o email."), EmailAddress(ErrorMessage = "Email inválido.")]
+        public string Email { get; set; } = "";
+
+        [Required(ErrorMessage = "Informe a senha."), StringLength(100, MinimumLength = 8, ErrorMessage = "A senha deve ter ao menos 8 caracteres.")]
+        public string Password { get; set; } = "";
+
+        [Compare(nameof(Password), ErrorMessage = "As senhas não conferem.")]
+        public string ConfirmPassword { get; set; } = "";
+    }
+}

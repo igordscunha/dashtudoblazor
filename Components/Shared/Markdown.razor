@@ -1,0 +1,17 @@
+@using Markdig
+
+<div class="markdown">@((MarkupString)html)</div>
+
+@code {
+    // DisableHtml: qualquer HTML vindo da IA é exibido como texto, evitando XSS.
+    private static readonly MarkdownPipeline Pipeline = new MarkdownPipelineBuilder()
+        .UseAdvancedExtensions()
+        .DisableHtml()
+        .Build();
+
+    private string html = "";
+
+    [Parameter] public string? Content { get; set; }
+
+    protected override void OnParametersSet() => html = Markdig.Markdown.ToHtml(Content ?? "", Pipeline);
+}

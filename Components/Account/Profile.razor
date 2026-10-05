@@ -1,0 +1,192 @@
+@page "/perfil"
+@attribute [Authorize]
+@attribute [ExcludeFromInteractiveRouting]
+@using System.ComponentModel.DataAnnotations
+@using Microsoft.AspNetCore.Identity
+@inject UserManager<ApplicationUser> UserManager
+@inject SignInManager<ApplicationUser> SignInManager
+@inject DatasetService Datasets
+@inject NavigationManager Navigation
+
+<PageTitle>Meu perfil · DashTudo</PageTitle>
+
+<section class="container page">
+    <h1>Meu perfil</h1>
+
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <div class="alert @(success ? "alert-success" : "alert-error")">@message</div>
+    }
+
+    <div class="stats-row">
+        <div class="stat"><span class="stat-value">@stats.Datasets</span><span class="stat-label">datasets</span></div>
+        <div class="stat"><span class="stat-value">@stats.Reports</span><span class="stat-label">relatórios de IA</span></div>
+        <div class="stat"><span class="stat-value">@FormatBytes(stats.Bytes)</span><span class="stat-label">enviados</span></div>
+        <div class="stat"><span class="stat-value">@user?.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy")</span><span class="stat-label">membro desde</span></div>
+    </div>
+
+    <div class="grid-2 gap-lg">
+        <div class="card">
+            <h3>Dados pessoais</h3>
+            <EditForm Model="Info" method="post" OnValidSubmit="SaveInfo" FormName="profile-info" Enhance="false">
+                <DataAnnotationsValidator />
+                <label>Nome</label>
+                <InputText @bind-Value="Info.FirstName" />
+                <ValidationMessage For="() => Info.FirstName" />
+                <label>Sobrenome</label>
+                <InputText @bind-Value="Info.LastName" />
+                <ValidationMessage For="() => Info.LastName" />
+                <label>Email</label>
+                <InputText type="email" @bind-Value="Info.Email" />
+                <ValidationMessage For="() => Info.Email" />
+                <label>Data de nascimento</label>
+                <InputDate @bind-Value="Info.BirthDate" />
+                <button type="submit" class="btn btn-primary">Salvar alterações</button>
+            </EditForm>
+        </div>
+
+        <div class="card">
+            <h3>Alterar senha</h3>
+            <EditForm Model="Pwd" method="post" OnValidSubmit="ChangePassword" FormName="profile-password" Enhance="false">
+                <DataAnnotationsValidator />
+                <label>Senha atual</label>
+                <InputText type="password" @bind-Value="Pwd.Current" autocomplete="current-password" />
+                <ValidationMessage For="() => Pwd.Current" />
+                <label>Nova senha</label>
+                <InputText type="password" @bind-Value="Pwd.New" autocomplete="new-password" />
+                <ValidationMessage For="() => Pwd.New" />
+                <label>Confirmar nova senha</label>
+                <InputText type="password" @bind-Value="Pwd.Confirm" autocomplete="new-password" />
+                <ValidationMessage For="() => Pwd.Confirm" />
+                <button type="submit" class="btn btn-primary">Alterar senha</button>
+            </EditForm>
+        </div>
+    </div>
+
+    <div class="card danger-zone">
+        <h3>Excluir conta</h3>
+        <p class="muted">Remove permanentemente sua conta, todos os uploads e relatórios. Esta ação não pode ser desfeita.</p>
+        <EditForm Model="Delete" method="post" OnValidSubmit="DeleteAccount" FormName="profile-delete" Enhance="false" class="inline-fields">
+            <DataAnnotationsValidator />
+            <InputText type="password" @bind-Value="Delete.Password" placeholder="Confirme com sua senha" autocomplete="current-password" />
+            <button type="submit" class="btn btn-danger">Excluir minha conta</button>
+            <ValidationMessage For="() => Delete.Password" />
+        </EditForm>
+    </div>
+</section>
+
+@code {
+    private ApplicationUser? user;
+    private (int Datasets, int Reports, long Bytes) stats;
+    private string? message;
+    private bool success;
+
+    [CascadingParameter] private HttpContext HttpContext { get; set; } = default!;
+
+    [SupplyParameterFromForm(FormName = "profile-info")] private InfoModel Info { get; set; } = default!;
+    [SupplyParameterFromForm(FormName = "profile-password")] private PasswordModel Pwd { get; set; } = default!;
+    [SupplyParameterFromForm(FormName = "profile-delete")] private DeleteModel Delete { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        Info ??= new();
+        Pwd ??= new();
+        Delete ??= new();
+        user = await UserManager.GetUserAsync(HttpContext.User);
+        if (user is null)
+        {
+            Navigation.NavigateTo("login", forceLoad: true);
+            return;
+        }
+        // Pré-preenche, a menos que o POST atual seja justamente deste formulário (o Blazor envia o nome em "_handler").
+        var postedForm = HttpMethods.IsPost(HttpContext.Request.Method) && HttpContext.Request.HasFormContentType
+            ? HttpContext.Request.Form["_handler"].ToString()
+            : null;
+        if (postedForm != "profile-info")
+        {
+            Info = new InfoModel { FirstName = user.FirstName, LastName = user.LastName, Email = user.Email ?? "", BirthDate = user.BirthDate };
+        }
+        stats = await Datasets.GetUserStatsAsync(user.Id);
+    }
+
+    private async Task SaveInfo()
+    {
+        if (user is null) return;
+        user.FirstName = Info.FirstName.Trim();
+        user.LastName = Info.LastName.Trim();
+        user.BirthDate = Info.BirthDate;
+
+        var email = Info.Email.Trim();
+        if (!string.Equals(email, user.Email, StringComparison.OrdinalIgnoreCase))
+        {
+            user.Email = email;
+            user.UserName = email;
+        }
+        var result = await UserManager.UpdateAsync(user);
+        if (!result.Succeeded)
+        {
+            Fail(string.Join(" ", result.Errors.Select(IdentityErrorsPt.Translate)));
+            return;
+        }
+        await SignInManager.RefreshSignInAsync(user);
+        Ok("Dados atualizados com sucesso.");
+    }
+
+    private async Task ChangePassword()
+    {
+        if (user is null) return;
+        var result = await UserManager.ChangePasswordAsync(user, Pwd.Current, Pwd.New);
+        if (!result.Succeeded)
+        {
+            Fail(string.Join(" ", result.Errors.Select(IdentityErrorsPt.Translate)));
+            return;
+        }
+        await SignInManager.RefreshSignInAsync(user);
+        Pwd = new();
+        Ok("Senha alterada com sucesso.");
+    }
+
+    private async Task DeleteAccount()
+    {
+        if (user is null) return;
+        if (!await UserManager.CheckPasswordAsync(user, Delete.Password))
+        {
+            Fail("Senha incorreta.");
+            return;
+        }
+        await UserManager.DeleteAsync(user); // datasets e relatórios são apagados em cascata
+        await SignInManager.SignOutAsync();
+        Navigation.NavigateTo("", forceLoad: true);
+    }
+
+    private void Ok(string text) => (message, success) = (text, true);
+    private void Fail(string text) => (message, success) = (text, false);
+
+    internal static string FormatBytes(long bytes) => bytes switch
+    {
+        < 1024 => $"{bytes} B",
+        < 1024 * 1024 => $"{bytes / 1024.0:0.#} KB",
+        < 1024L * 1024 * 1024 => $"{bytes / 1024.0 / 1024:0.#} MB",
+        _ => $"{bytes / 1024.0 / 1024 / 1024:0.##} GB",
+    };
+
+    private sealed class InfoModel
+    {
+        [Required(ErrorMessage = "Informe o nome."), StringLength(100)] public string FirstName { get; set; } = "";
+        [Required(ErrorMessage = "Informe o sobrenome."), StringLength(100)] public string LastName { get; set; } = "";
+        [Required(ErrorMessage = "Informe o email."), EmailAddress(ErrorMessage = "Email inválido.")] public string Email { get; set; } = "";
+        public DateOnly? BirthDate { get; set; }
+    }
+
+    private sealed class PasswordModel
+    {
+        [Required(ErrorMessage = "Informe a senha atual.")] public string Current { get; set; } = "";
+        [Required(ErrorMessage = "Informe a nova senha."), StringLength(100, MinimumLength = 8, ErrorMessage = "A senha deve ter ao menos 8 caracteres.")] public string New { get; set; } = "";
+        [Compare(nameof(New), ErrorMessage = "As senhas não conferem.")] public string Confirm { get; set; } = "";
+    }
+
+    private sealed class DeleteModel
+    {
+        [Required(ErrorMessage = "Confirme com sua senha.")] public string Password { get; set; } = "";
+    }
+}

@@ -1,0 +1,53 @@
+@implements IDisposable
+@inject NavigationManager Navigation
+
+<nav class="navbar">
+    <div class="container navbar-inner">
+        <a href="" class="brand">
+            <img src="img/logo.svg" width="36" height="36" alt="Logo do DashTudo" />
+            <span>DashTudo</span>
+        </a>
+
+        @* Menu mobile sem JavaScript: funciona tanto nas páginas estáticas quanto nas interativas. *@
+        <input type="checkbox" id="nav-toggle" class="nav-toggle" aria-label="Abrir menu" />
+        <label for="nav-toggle" class="nav-toggle-label" aria-hidden="true"><span></span></label>
+
+        <div class="nav-links">
+            <NavLink href="" Match="NavLinkMatch.All">Início</NavLink>
+            <AuthorizeView>
+                <Authorized>
+                    <NavLink href="dashboard">Dashboard</NavLink>
+                    <NavLink href="historico">Histórico</NavLink>
+                    <NavLink href="perfil">Perfil</NavLink>
+                    <form action="account/logout" method="post" class="inline-form">
+                        <AntiforgeryToken />
+                        <input type="hidden" name="ReturnUrl" value="" />
+                        <button type="submit" class="btn btn-light btn-sm">Sair</button>
+                    </form>
+                </Authorized>
+                <NotAuthorized>
+                    <NavLink href="@($"login?returnUrl={Uri.EscapeDataString(currentPath)}")">Entrar</NavLink>
+                    <a href="criarconta" class="btn btn-light btn-sm">Criar conta</a>
+                </NotAuthorized>
+            </AuthorizeView>
+        </div>
+    </div>
+</nav>
+
+@code {
+    private string currentPath = "";
+
+    protected override void OnInitialized()
+    {
+        currentPath = Navigation.ToBaseRelativePath(Navigation.Uri);
+        Navigation.LocationChanged += OnLocationChanged;
+    }
+
+    private void OnLocationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        currentPath = Navigation.ToBaseRelativePath(e.Location);
+        StateHasChanged();
+    }
+
+    public void Dispose() => Navigation.LocationChanged -= OnLocationChanged;
+}

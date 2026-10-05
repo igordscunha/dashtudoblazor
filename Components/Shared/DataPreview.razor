@@ -1,0 +1,39 @@
+<div class="table-wrapper">
+    <table class="table">
+        <thead>
+            <tr>
+                @foreach (var c in Data.Columns.Take(MaxColumns))
+                {
+                    <th class="@(c.Type == ColumnType.Number ? "num" : "")">@Label(c.Name)</th>
+                }
+                @if (Data.Columns.Count > MaxColumns)
+                {
+                    <th>…</th>
+                }
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var row in Data.Rows.Take(MaxRows))
+            {
+                <tr>
+                    @for (var i = 0; i < Math.Min(MaxColumns, Data.Columns.Count); i++)
+                    {
+                        var v = Data.Columns[i].Type == ColumnType.Number && DataAnalysisService.TryNumber(row[i], out var n) ? ValueParser.FormatNumber(n) : row[i] ?? "";
+                        <td class="@(Data.Columns[i].Type == ColumnType.Number ? "num" : "")">@(v.Length > 50 ? v[..50] + "…" : v)</td>
+                    }
+                    @if (Data.Columns.Count > MaxColumns)
+                    {
+                        <td>…</td>
+                    }
+                </tr>
+            }
+        </tbody>
+    </table>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ParsedDataset Data { get; set; } = default!;
+    [Parameter] public Func<string, string> Label { get; set; } = s => s;
+    [Parameter] public int MaxRows { get; set; } = 5;
+    [Parameter] public int MaxColumns { get; set; } = 8;
+}

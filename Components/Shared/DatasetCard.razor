@@ -1,0 +1,29 @@
+<a class="dataset-card card" href="@($"datasets/{Dataset.Id}")">
+    <div class="dataset-card-top">
+        <span class="badge badge-@Dataset.FileType">@Dataset.FileType.ToUpperInvariant()</span>
+        @if (Dataset.IsFavorite)
+        {
+            <span title="Favorito">⭐</span>
+        }
+    </div>
+    <h4>@Dataset.Name</h4>
+    <p class="small muted">
+        @if (Dataset.Kind == DatasetKind.Tabular)
+        {
+            <span>@Dataset.RowCount.ToString("N0") linhas · @Dataset.ColumnCount colunas</span>
+        }
+        else
+        {
+            <span>Documento</span>
+        }
+        @if (Dataset.Reports.Count > 0)
+        {
+            <span> · 🤖 @Dataset.Reports.Count</span>
+        }
+    </p>
+    <p class="small muted">@Dataset.UpdatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")</p>
+</a>
+
+@code {
+    [Parameter, EditorRequired] public Dataset Dataset { get; set; } = default!;
+}

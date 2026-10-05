@@ -1,0 +1,83 @@
+@page "/historico"
+@attribute [Authorize]
+@inject DatasetService Datasets
+
+<PageTitle>Histórico · DashTudo</PageTitle>
+
+<section class="container page">
+    <div class="page-header">
+        <div>
+            <h1>Histórico</h1>
+            <p class="muted">Todos os dados que você já enviou, com gráficos e relatórios salvos.</p>
+        </div>
+        <a href="dashboard" class="btn btn-primary">+ Novo upload</a>
+    </div>
+
+    <div class="filters card">
+        <input type="search" placeholder="Buscar por nome, arquivo ou descrição..." @bind="search" @bind:event="oninput" @bind:after="Reload" />
+        <select @bind="kindFilter" @bind:after="Reload">
+            <option value="">Todos os tipos</option>
+            <option value="tabular">Planilhas</option>
+            <option value="document">Documentos</option>
+        </select>
+        <label class="checkbox"><input type="checkbox" @bind="favoritesOnly" @bind:after="Reload" /> Só favoritos</label>
+    </div>
+
+    @if (items is null)
+    {
+        <Loading />
+    }
+    else if (items.Count == 0)
+    {
+        <div class="empty card">
+            <p>Nenhum dataset encontrado.</p>
+            <a href="dashboard" class="btn btn-primary">Enviar meu primeiro arquivo</a>
+        </div>
+    }
+    else
+    {
+        <p class="small muted">@items.Count item(ns)</p>
+        <div class="dataset-grid">
+            @foreach (var d in items)
+            {
+                <DatasetCard Dataset="d" />
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private List<Dataset>? items;
+    private string search = "";
+    private string kindFilter = "";
+    private bool favoritesOnly;
+    private string userId = "";
+    private CancellationTokenSource? debounce;
+
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    protected override async Task OnInitializedAsync()
+    {
+        userId = (await AuthState).User.UserId();
+        await Load();
+    }
+
+    private async Task Reload()
+    {
+        // Debounce simples para a busca enquanto digita.
+        debounce?.Cancel();
+        debounce = new CancellationTokenSource();
+        try
+        {
+            await Task.Delay(250, debounce.Token);
+            await Load();
+        }
+        catch (TaskCanceledException) { }
+    }
+
+    private async Task Load()
+    {
+        DatasetKind? kind = kindFilter switch { "tabular" => DatasetKind.Tabular, "document" => DatasetKind.Document, _ => null };
+        items = await Datasets.ListAsync(userId, search, kind, favoritesOnly);
+    }
+}

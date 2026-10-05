@@ -1,0 +1,23 @@
+@page "/Error"
+@using System.Diagnostics
+
+<PageTitle>Erro · DashTudo</PageTitle>
+
+<section class="container page center">
+    <h1>Ops! Algo deu errado.</h1>
+    <p class="muted">Ocorreu um erro ao processar sua solicitação. Tente novamente em instantes.</p>
+    @if (!string.IsNullOrEmpty(RequestId))
+    {
+        <p class="small muted">Código da requisição: <code>@RequestId</code></p>
+    }
+</section>
+
+@code {
+    [CascadingParameter]
+    private HttpContext? HttpContext { get; set; }
+
+    private string? RequestId { get; set; }
+
+    protected override void OnInitialized() =>
+        RequestId = Activity.Current?.Id ?? HttpContext?.TraceIdentifier;
+}

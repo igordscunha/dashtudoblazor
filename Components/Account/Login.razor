@@ -1,0 +1,89 @@
+@page "/login"
+@attribute [ExcludeFromInteractiveRouting]
+@using System.ComponentModel.DataAnnotations
+@inject SignInManager<ApplicationUser> SignInManager
+@inject NavigationManager Navigation
+@inject ILogger<Login> Logger
+@using Microsoft.AspNetCore.Identity
+
+<PageTitle>Entrar · DashTudo</PageTitle>
+
+<section class="container page auth-page">
+    <div class="card auth-card">
+        <img src="img/dashtudo1-nobg.png" alt="" class="auth-logo" />
+        <h1>Entrar</h1>
+        <p class="muted">Acesse seus dashboards e o histórico de análises.</p>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-error">@errorMessage</div>
+        }
+
+        <EditForm Model="Input" method="post" OnValidSubmit="LoginUser" FormName="login" Enhance="false">
+            <DataAnnotationsValidator />
+            <label for="email">Email</label>
+            <InputText id="email" type="email" @bind-Value="Input.Email" autocomplete="username" placeholder="voce@exemplo.com" />
+            <ValidationMessage For="() => Input.Email" />
+
+            <label for="password">Senha</label>
+            <InputText id="password" type="password" @bind-Value="Input.Password" autocomplete="current-password" placeholder="Sua senha" />
+            <ValidationMessage For="() => Input.Password" />
+
+            <label class="checkbox">
+                <InputCheckbox @bind-Value="Input.RememberMe" /> Manter conectado
+            </label>
+
+            <button type="submit" class="btn btn-primary btn-block">Entrar</button>
+        </EditForm>
+
+        <p class="small center">Não possui conta? <a href="@($"criarconta?returnUrl={Uri.EscapeDataString(ReturnUrl ?? "")}")">Registre-se.</a></p>
+    </div>
+</section>
+
+@code {
+    private string? errorMessage;
+
+    [SupplyParameterFromForm]
+    private InputModel Input { get; set; } = default!;
+
+    protected override void OnInitialized() => Input ??= new();
+
+    [SupplyParameterFromQuery]
+    private string? ReturnUrl { get; set; }
+
+    private async Task LoginUser()
+    {
+        var result = await SignInManager.PasswordSignInAsync(Input.Email.Trim(), Input.Password, Input.RememberMe, lockoutOnFailure: true);
+        if (result.Succeeded)
+        {
+            Logger.LogInformation("Usuário entrou.");
+            Navigation.NavigateTo(SafeReturnUrl(ReturnUrl), forceLoad: true);
+            return;
+        }
+        errorMessage = result.IsLockedOut
+            ? "Muitas tentativas inválidas. Sua conta foi bloqueada por alguns minutos."
+            : "Email ou senha inválidos.";
+    }
+
+    internal static string SafeReturnUrl(string? returnUrl)
+    {
+        // Evita "open redirect": só aceita caminhos relativos do próprio site.
+        if (string.IsNullOrWhiteSpace(returnUrl) || returnUrl.Contains("://") || returnUrl.StartsWith("//") || returnUrl.StartsWith("\\"))
+            return "dashboard";
+        var path = returnUrl.TrimStart('/');
+        return path is "" or "login" or "criarconta" ? "dashboard" : path;
+    }
+
+    private sealed class InputModel
+    {
+        [Required(ErrorMessage = "Informe o email.")]
+        [EmailAddress(ErrorMessage = "Email inválido.")]
+        public string Email { get; set; } = "";
+
+        [Required(ErrorMessage = "Informe a senha.")]
+        [DataType(DataType.Password)]
+        public string Password { get; set; } = "";
+
+        public bool RememberMe { get; set; } = true;
+    }
+}

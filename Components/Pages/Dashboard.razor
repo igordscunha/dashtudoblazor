@@ -1,0 +1,156 @@
+@page "/dashboard"
+@attribute [Authorize]
+@using Microsoft.Extensions.Options
+@inject FileParserService Parser
+@inject DatasetService Datasets
+@inject NavigationManager Navigation
+@inject IOptions<UploadOptions> UploadOptions
+
+<PageTitle>Dashboard · DashTudo</PageTitle>
+
+<section class="container page">
+    <div class="page-header">
+        <div>
+            <h1>📊 Visualizador de dados</h1>
+            <p class="muted">Transforme seus dados em insights visuais.</p>
+        </div>
+    </div>
+
+    <div class="card">
+        <div class="tabs">
+            <button class="tab @(pasteMode ? "" : "active")" @onclick="() => pasteMode = false">Enviar arquivo</button>
+            <button class="tab @(pasteMode ? "active" : "")" @onclick="() => pasteMode = true">Colar dados</button>
+        </div>
+
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div class="alert alert-error">@error</div>
+        }
+
+        @if (busy)
+        {
+            <Loading Text="@busyText" />
+        }
+        @if (!pasteMode)
+        {
+            @* O InputFile precisa continuar no DOM enquanto o arquivo é lido, por isso só é escondido. *@
+            <label class="dropzone" style="@(busy ? "display:none" : "")">
+                <InputFile OnChange="OnFileSelected" accept="@FileParserService.AcceptAttribute" />
+                <div class="dropzone-icon">⬆️</div>
+                <h3>Arraste e solte ou clique para selecionar</h3>
+                <p class="muted">CSV, TSV, Excel (.xlsx), PDF, TXT ou Markdown · até @(UploadOptions.Value.MaxFileSizeBytes / 1024 / 1024) MB</p>
+            </label>
+        }
+        else if (!busy)
+        {
+            <div class="paste-area">
+                <label>Nome</label>
+                <input type="text" @bind="pasteName" placeholder="Ex.: Vendas do trimestre" />
+                <label>Conteúdo</label>
+                <textarea rows="10" @bind="pasteText" placeholder="Cole aqui dados copiados de uma planilha (com cabeçalho) ou qualquer texto para a IA analisar."></textarea>
+                <button class="btn btn-primary" @onclick="SavePasted" disabled="@string.IsNullOrWhiteSpace(pasteText)">Analisar</button>
+            </div>
+        }
+    </div>
+
+    @if (recent is { Count: > 0 })
+    {
+        <div class="section-header">
+            <h3>Envios recentes</h3>
+            <a href="historico">Ver todos →</a>
+        </div>
+        <div class="dataset-grid">
+            @foreach (var d in recent)
+            {
+                <DatasetCard Dataset="d" />
+            }
+        </div>
+    }
+</section>
+
+@code {
+    private bool pasteMode;
+    private bool busy;
+    private string busyText = "";
+    private string? error;
+    private string pasteName = "";
+    private string pasteText = "";
+    private List<Dataset>? recent;
+
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+    private string userId = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        userId = (await AuthState).User.UserId();
+        recent = (await Datasets.ListAsync(userId)).Take(6).ToList();
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        error = null;
+        var file = e.File;
+        var max = UploadOptions.Value.MaxFileSizeBytes;
+        if (file.Size > max)
+        {
+            error = $"O arquivo tem {file.Size / 1024.0 / 1024:0.#} MB; o limite é {max / 1024 / 1024} MB.";
+            return;
+        }
+
+        busy = true;
+        busyText = $"Enviando {file.Name}...";
+        StateHasChanged();
+        try
+        {
+            using var ms = new MemoryStream();
+            await using (var stream = file.OpenReadStream(max))
+            {
+                await stream.CopyToAsync(ms);
+            }
+            busyText = "Processando os dados...";
+            StateHasChanged();
+
+            var bytes = ms.ToArray();
+            var parsed = await Task.Run(() => Parser.Parse(bytes, file.Name));
+            var name = Path.GetFileNameWithoutExtension(file.Name);
+            var dataset = await Datasets.CreateAsync(userId, Truncate(name, 200), file.Name, file.Size, parsed);
+            Navigation.NavigateTo($"datasets/{dataset.Id}");
+        }
+        catch (FileParseException ex)
+        {
+            error = ex.Message;
+        }
+        catch (IOException)
+        {
+            error = "Falha ao receber o arquivo. Verifique sua conexão e tente novamente.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SavePasted()
+    {
+        error = null;
+        busy = true;
+        busyText = "Processando os dados...";
+        try
+        {
+            var parsed = await Task.Run(() => Parser.ParsePastedText(pasteText));
+            var name = string.IsNullOrWhiteSpace(pasteName) ? $"Dados colados {DateTime.Now:dd/MM/yyyy HH:mm}" : pasteName.Trim();
+            var dataset = await Datasets.CreateAsync(userId, Truncate(name, 200), "(colado)", System.Text.Encoding.UTF8.GetByteCount(pasteText), parsed);
+            Navigation.NavigateTo($"datasets/{dataset.Id}");
+        }
+        catch (FileParseException ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static string Truncate(string s, int max) => s.Length <= max ? s : s[..max];
+}

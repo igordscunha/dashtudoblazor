@@ -1,0 +1,677 @@
+@page "/datasets/{Id:int}"
+@attribute [Authorize]
+@implements IDisposable
+@inject DatasetService Datasets
+@inject DataAnalysisService Analysis
+@inject AiInsightsService Ai
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+<PageTitle>@(dataset?.Name ?? "Dataset") · DashTudo</PageTitle>
+
+<section class="container page">
+    @if (notFound)
+    {
+        <div class="empty card">
+            <p>Dataset não encontrado.</p>
+            <a href="historico" class="btn btn-primary">Voltar ao histórico</a>
+        </div>
+    }
+    else if (dataset is null || data is null)
+    {
+        <Loading />
+    }
+    else
+    {
+        <div class="page-header">
+            <div class="grow">
+                <a href="historico" class="small">← Histórico</a>
+                @if (editingDetails)
+                {
+                    <div class="details-editor">
+                        <input type="text" @bind="editName" maxlength="200" />
+                        <textarea rows="2" @bind="editDescription" maxlength="1000" placeholder="Descrição (ajuda a IA a entender o contexto dos dados)"></textarea>
+                        <div class="row">
+                            <button class="btn btn-primary btn-sm" @onclick="SaveDetails">Salvar</button>
+                            <button class="btn btn-outline btn-sm" @onclick="() => editingDetails = false">Cancelar</button>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <h1>
+                        @dataset.Name
+                        <button class="icon-btn" title="Editar nome e descrição" @onclick="StartEditDetails">✏️</button>
+                    </h1>
+                    @if (!string.IsNullOrWhiteSpace(dataset.Description))
+                    {
+                        <p class="muted">@dataset.Description</p>
+                    }
+                }
+                <p class="small muted">
+                    <span class="badge badge-@dataset.FileType">@dataset.FileType.ToUpperInvariant()</span>
+                    @dataset.OriginalFileName · enviado em @dataset.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm")
+                    @if (data.IsTabular)
+                    {
+                        <span> · @data.Rows.Count.ToString("N0") linhas · @data.Columns.Count colunas</span>
+                    }
+                    else
+                    {
+                        <span> · @data.PageCount página(s) · @wordCount.ToString("N0") palavras</span>
+                    }
+                </p>
+            </div>
+            <div class="row wrap">
+                <button class="btn btn-outline btn-sm" @onclick="ToggleFavorite">@(dataset.IsFavorite ? "⭐ Favorito" : "☆ Favoritar")</button>
+                @if (data.IsTabular)
+                {
+                    <button class="btn btn-outline btn-sm" @onclick="DownloadCsv">⬇️ CSV</button>
+                }
+                @if (confirmDelete)
+                {
+                    <button class="btn btn-danger btn-sm" @onclick="DeleteDataset">Confirmar exclusão</button>
+                    <button class="btn btn-outline btn-sm" @onclick="() => confirmDelete = false">Cancelar</button>
+                }
+                else
+                {
+                    <button class="btn btn-outline btn-sm danger-text" @onclick="() => confirmDelete = true">🗑️ Excluir</button>
+                }
+            </div>
+        </div>
+
+        @foreach (var w in data.Warnings)
+        {
+            <div class="alert alert-warning">@w</div>
+        }
+
+        <div class="tabs">
+            @if (data.IsTabular)
+            {
+                <button class="tab @Active("chart")" @onclick="@(() => tab = "chart")">📈 Gráfico</button>
+                <button class="tab @Active("data")" @onclick="@(() => tab = "data")">🧾 Dados</button>
+                <button class="tab @Active("stats")" @onclick="@(() => tab = "stats")">🔢 Estatísticas</button>
+            }
+            else
+            {
+                <button class="tab @Active("text")" @onclick="@(() => tab = "text")">📄 Conteúdo</button>
+            }
+            <button class="tab @Active("ai")" @onclick="@(() => tab = "ai")">🤖 Insights com IA @(reports.Count > 0 ? $"({reports.Count})" : "")</button>
+        </div>
+
+        @switch (tab)
+        {
+            case "chart":
+                <div class="layout-sidebar">
+                    <aside class="stack">
+                        <div class="card">
+                            <div class="card-title-row">
+                                <h3>⚙️ Configurações</h3>
+                                <button class="icon-btn" title="Renomear colunas" @onclick="() => editingLabels = !editingLabels">🏷️</button>
+                            </div>
+
+                            <label>Título do gráfico</label>
+                            <input type="text" @bind="settings.Title" @bind:after="Recompute" />
+
+                            <label>Tipo de gráfico</label>
+                            <div class="chart-types">
+                                @foreach (var (kind, icon, text) in ChartKinds)
+                                {
+                                    <button class="chart-type @(settings.Kind == kind ? "active" : "")" @onclick="() => SetKind(kind)">
+                                        <span>@icon</span><small>@text</small>
+                                    </button>
+                                }
+                            </div>
+
+                            <label>Eixo X (categorias)</label>
+                            <select @bind="settings.XColumn" @bind:after="Recompute">
+                                <option value="">Selecione...</option>
+                                @foreach (var c in data.Columns)
+                                {
+                                    <option value="@c.Name">@Label(c.Name)</option>
+                                }
+                            </select>
+
+                            @if (XIsDate)
+                            {
+                                <label>Agrupar datas por</label>
+                                <select @bind="settings.DateGrouping" @bind:after="Recompute">
+                                    <option value="@DateGrouping.Day">Dia</option>
+                                    <option value="@DateGrouping.Month">Mês</option>
+                                    <option value="@DateGrouping.Year">Ano</option>
+                                    <option value="@DateGrouping.None">Não agrupar</option>
+                                </select>
+                            }
+
+                            <label>Eixo Y (valores)</label>
+                            <div class="checklist">
+                                @foreach (var c in data.Columns.Where(c => c.Type == ColumnType.Number))
+                                {
+                                    <label class="checkbox">
+                                        <input type="checkbox" checked="@settings.YColumns.Contains(c.Name)" @onchange="e => ToggleY(c.Name, (bool)e.Value!)" />
+                                        @Label(c.Name)
+                                    </label>
+                                }
+                                @if (!data.Columns.Any(c => c.Type == ColumnType.Number))
+                                {
+                                    <p class="small muted">Nenhuma coluna numérica; o gráfico mostra a contagem de linhas.</p>
+                                }
+                            </div>
+
+                            <label>Agregação</label>
+                            <select @bind="settings.Aggregation" @bind:after="Recompute">
+                                <option value="@Aggregation.Sum">Soma</option>
+                                <option value="@Aggregation.Average">Média</option>
+                                <option value="@Aggregation.Count">Contagem de linhas</option>
+                                <option value="@Aggregation.Min">Mínimo</option>
+                                <option value="@Aggregation.Max">Máximo</option>
+                            </select>
+
+                            <div class="grid-2">
+                                <div>
+                                    <label>Ordenar por</label>
+                                    <select @bind="settings.Sort" @bind:after="Recompute">
+                                        <option value="label">Categoria</option>
+                                        <option value="value-desc">Maior valor</option>
+                                        <option value="value-asc">Menor valor</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <label>Máx. categorias</label>
+                                    <input type="number" min="2" max="500" @bind="settings.MaxCategories" @bind:after="Recompute" />
+                                </div>
+                            </div>
+
+                            <button class="btn btn-primary btn-block" @onclick="SaveChart">💾 Salvar configuração</button>
+                            @if (savedMessage is not null)
+                            {
+                                <p class="small success-text center">@savedMessage</p>
+                            }
+                        </div>
+
+                        @if (editingLabels)
+                        {
+                            <div class="card">
+                                <h3>Renomear colunas</h3>
+                                @foreach (var c in data.Columns)
+                                {
+                                    <label class="small muted">@c.Name</label>
+                                    <input type="text" value="@Label(c.Name)" @onchange="e => SetLabel(c.Name, e.Value?.ToString())" />
+                                }
+                            </div>
+                        }
+
+                        <div class="card">
+                            <h3>👁️ Insights rápidos</h3>
+                            <ul class="insights">
+                                @foreach (var i in quickInsights)
+                                {
+                                    <li>@i</li>
+                                }
+                            </ul>
+                            <button class="btn btn-outline btn-block btn-sm" @onclick="@(() => tab = "ai")">🤖 Pedir análise à IA</button>
+                        </div>
+                    </aside>
+
+                    <div class="stack">
+                        <div class="card">
+                            <div class="card-title-row">
+                                <h3>Visualização</h3>
+                                <button class="btn btn-success btn-sm" @onclick="ExportChart" disabled="@(chartData is null || chartData.Labels.Length == 0)">⬇️ Exportar PNG</button>
+                            </div>
+                            <ChartView @ref="chartView" Data="chartData" Settings="settings" Label="Label" />
+                            @if (chartData?.OtherCategoriesGrouped > 0)
+                            {
+                                <p class="small muted">
+                                    @(settings.Kind is ChartKind.Line or ChartKind.Area && settings.Sort == "label"
+                                        ? $"Mostrando as últimas {settings.MaxCategories} categorias ({chartData.OtherCategoriesGrouped} anteriores ocultas)."
+                                        : $"{chartData.OtherCategoriesGrouped} categorias menores foram agrupadas em \"Outros\".")
+                                </p>
+                            }
+                        </div>
+
+                        <div class="card">
+                            <h3>Preview dos dados</h3>
+                            <DataPreview Data="data" Label="Label" MaxRows="5" MaxColumns="8" />
+                            <button class="btn btn-outline btn-sm" @onclick="@(() => tab = "data")">Ver todas as @data.Rows.Count.ToString("N0") linhas →</button>
+                        </div>
+                    </div>
+                </div>
+                break;
+
+            case "data":
+                <div class="card">
+                    <div class="card-title-row">
+                        <input type="search" class="grow" placeholder="Filtrar linhas..." @bind="rowFilter" @bind:event="oninput" />
+                        <span class="small muted">@FilteredRows.Count().ToString("N0") linha(s)</span>
+                    </div>
+                    <div class="grid-wrapper">
+                        <QuickGrid Items="FilteredRows" Pagination="pagination" Class="data-grid">
+                            @for (var i = 0; i < data.Columns.Count; i++)
+                            {
+                                var idx = i;
+                                var col = data.Columns[idx];
+                                <TemplateColumn Title="@Label(col.Name)" Sortable="true" SortBy="SortFor(idx, col.Type)" Class="@(col.Type == ColumnType.Number ? "num" : "")">
+                                    @FormatCell(context[idx], col.Type)
+                                </TemplateColumn>
+                            }
+                        </QuickGrid>
+                    </div>
+                    <Paginator State="pagination" />
+                </div>
+                break;
+
+            case "stats":
+                <div class="card">
+                    <div class="table-wrapper">
+                        <table class="table">
+                            <thead>
+                                <tr>
+                                    <th>Coluna</th><th>Tipo</th><th class="num">Preenchidos</th><th class="num">Vazios</th><th class="num">Distintos</th>
+                                    <th class="num">Soma</th><th class="num">Média</th><th class="num">Mediana</th><th class="num">Desvio</th><th>Mín</th><th>Máx</th><th>Mais frequentes</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var p in profiles)
+                                {
+                                    <tr>
+                                        <td><strong>@Label(p.Name)</strong></td>
+                                        <td>@TypeLabel(p.Type)</td>
+                                        <td class="num">@p.NonEmpty.ToString("N0")</td>
+                                        <td class="num">@p.Empty.ToString("N0")</td>
+                                        <td class="num">@p.Distinct.ToString("N0")</td>
+                                        <td class="num">@N(p.Sum)</td>
+                                        <td class="num">@N(p.Mean)</td>
+                                        <td class="num">@N(p.Median)</td>
+                                        <td class="num">@N(p.StdDev)</td>
+                                        <td>@(p.Type == ColumnType.Date ? p.MinDate?.ToString("dd/MM/yyyy") : N(p.Min))</td>
+                                        <td>@(p.Type == ColumnType.Date ? p.MaxDate?.ToString("dd/MM/yyyy") : N(p.Max))</td>
+                                        <td class="small">@string.Join(", ", p.TopValues.Select(t => $"{t.Value} ({t.Count})"))</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+                break;
+
+            case "text":
+                <div class="card">
+                    <pre class="document-text">@(data.Text?.Length > 50_000 ? data.Text[..50_000] + "\n\n[... pré-visualização truncada ...]" : data.Text)</pre>
+                </div>
+                break;
+
+            case "ai":
+                <div class="layout-sidebar">
+                    <aside class="stack">
+                        <div class="card">
+                            <h3>🤖 Gerar com IA</h3>
+                            @if (!Ai.IsConfigured)
+                            {
+                                <div class="alert alert-warning">A IA ainda não foi configurada no servidor (provedor: @Ai.ProviderName). Veja o README.</div>
+                            }
+                            else
+                            {
+                                <p class="small muted">A IA lê seus dados e escreve a análise em português. Os resultados ficam salvos aqui.</p>
+                                <div class="stack-sm">
+                                    <button class="btn btn-outline btn-block" disabled="@generating" @onclick="() => Generate(ReportKind.Summary)">📝 Resumo executivo</button>
+                                    <button class="btn btn-outline btn-block" disabled="@generating" @onclick="() => Generate(ReportKind.Insights)">💡 Insights e anomalias</button>
+                                    <button class="btn btn-outline btn-block" disabled="@generating" @onclick="() => Generate(ReportKind.FullReport)">📑 Relatório completo</button>
+                                </div>
+                                <label>Ou faça uma pergunta</label>
+                                <textarea rows="3" @bind="question" @bind:event="oninput" maxlength="2000" placeholder="Ex.: Qual região teve maior crescimento? Existe sazonalidade?"></textarea>
+                                <button class="btn btn-primary btn-block" disabled="@(generating || string.IsNullOrWhiteSpace(question))" @onclick="() => Generate(ReportKind.Question)">Perguntar</button>
+                                @if (Ai.DailyLimit > 0)
+                                {
+                                    <p class="small muted center">Uso hoje: @reportsToday / @Ai.DailyLimit</p>
+                                }
+                            }
+                        </div>
+                    </aside>
+
+                    <div class="stack">
+                        @if (!string.IsNullOrEmpty(aiError))
+                        {
+                            <div class="alert alert-error">@aiError</div>
+                        }
+
+                        @if (generating || streamingText is not null)
+                        {
+                            <div class="card report live">
+                                <div class="card-title-row">
+                                    <h3>@AiInsightsService.KindLabel(generatingKind) @(generating ? "· gerando..." : "")</h3>
+                                    @if (generating)
+                                    {
+                                        <button class="btn btn-outline btn-sm" @onclick="CancelGeneration">Parar</button>
+                                    }
+                                </div>
+                                @if (string.IsNullOrEmpty(streamingText))
+                                {
+                                    <p class="muted loading-pulse"><em>A IA está lendo seus dados...</em></p>
+                                }
+                                else
+                                {
+                                    <Markdown Content="@streamingText" />
+                                }
+                            </div>
+                        }
+
+                        @if (reports.Count == 0 && !generating)
+                        {
+                            <div class="empty card">
+                                <p class="muted">Nenhum relatório ainda. Escolha uma opção ao lado para começar.</p>
+                            </div>
+                        }
+
+                        @foreach (var r in reports)
+                        {
+                            <details class="card report" open="@(r.Id == expandedReportId)">
+                                <summary>
+                                    <strong>@AiInsightsService.KindLabel(r.Kind)</strong>
+                                    @if (!string.IsNullOrWhiteSpace(r.Question))
+                                    {
+                                        <span class="muted"> — @r.Question</span>
+                                    }
+                                    <span class="small muted report-meta">@r.CreatedAt.ToLocalTime().ToString("dd/MM/yyyy HH:mm") · @r.Model</span>
+                                </summary>
+                                <Markdown Content="@r.ContentMarkdown" />
+                                <div class="row wrap report-actions">
+                                    <button class="btn btn-outline btn-sm" @onclick="() => CopyReport(r)">📋 Copiar</button>
+                                    <button class="btn btn-outline btn-sm" @onclick="() => DownloadReport(r)">⬇️ Baixar .md</button>
+                                    <button class="btn btn-outline btn-sm danger-text" @onclick="() => DeleteReport(r)">🗑️ Excluir</button>
+                                </div>
+                            </details>
+                        }
+                    </div>
+                </div>
+                break;
+        }
+    }
+</section>
+
+@code {
+    [Parameter] public int Id { get; set; }
+    [CascadingParameter] private Task<AuthenticationState> AuthState { get; set; } = default!;
+
+    private static readonly (ChartKind Kind, string Icon, string Text)[] ChartKinds =
+    [
+        (ChartKind.Bar, "📊", "Barras"),
+        (ChartKind.HorizontalBar, "📶", "Horizontal"),
+        (ChartKind.Line, "📈", "Linha"),
+        (ChartKind.Area, "🏔️", "Área"),
+        (ChartKind.Pie, "🥧", "Pizza"),
+        (ChartKind.Doughnut, "🍩", "Rosca"),
+    ];
+
+    private string userId = "";
+    private bool notFound;
+    private Dataset? dataset;
+    private ParsedDataset? data;
+    private byte[]? originalFile;
+    private List<ColumnProfile> profiles = [];
+    private List<string> quickInsights = [];
+    private int wordCount;
+    private string tab = "chart";
+
+    // Detalhes
+    private bool editingDetails;
+    private string editName = "";
+    private string? editDescription;
+    private bool confirmDelete;
+
+    // Gráfico
+    private ChartSettings settings = new();
+    private Dictionary<string, string> labels = [];
+    private ChartData? chartData;
+    private ChartView? chartView;
+    private bool editingLabels;
+    private string? savedMessage;
+
+    // Dados
+    private readonly PaginationState pagination = new() { ItemsPerPage = 25 };
+    private string rowFilter = "";
+
+    // IA
+    private List<AiReport> reports = [];
+    private string question = "";
+    private bool generating;
+    private ReportKind generatingKind;
+    private string? streamingText;
+    private string? aiError;
+    private int reportsToday;
+    private int? expandedReportId;
+    private CancellationTokenSource? generationCts;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        userId = (await AuthState).User.UserId();
+        dataset = await Datasets.GetAsync(userId, Id);
+        if (dataset is null)
+        {
+            notFound = true;
+            return;
+        }
+        var content = await Datasets.LoadContentAsync(userId, Id);
+        if (content is null)
+        {
+            notFound = true;
+            return;
+        }
+        (data, originalFile) = content.Value;
+
+        if (data.IsTabular)
+        {
+            profiles = Analysis.Profile(data);
+            quickInsights = Analysis.QuickInsights(data, profiles);
+            settings = DatasetService.ReadChartSettings(dataset) ?? Analysis.SuggestChart(data, dataset.Name);
+            labels = DatasetService.ReadColumnLabels(dataset);
+            Recompute();
+            tab = "chart";
+        }
+        else
+        {
+            wordCount = data.Text?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).Length ?? 0;
+            tab = "text";
+        }
+
+        reports = await Datasets.ListReportsAsync(userId, Id);
+        reportsToday = await Datasets.CountReportsTodayAsync(userId);
+    }
+
+    private string Active(string name) => tab == name ? "active" : "";
+    private string Label(string column) => labels.TryGetValue(column, out var l) && !string.IsNullOrWhiteSpace(l) ? l : column;
+    private bool XIsDate => data is not null && settings.XColumn is not null && data.Columns.FirstOrDefault(c => c.Name == settings.XColumn)?.Type == ColumnType.Date;
+
+    private void Recompute()
+    {
+        if (data is null) return;
+        savedMessage = null;
+        chartData = Analysis.BuildChart(data, settings);
+    }
+
+    private void SetKind(ChartKind kind)
+    {
+        settings.Kind = kind;
+        Recompute();
+    }
+
+    private void ToggleY(string column, bool on)
+    {
+        settings.YColumns.Remove(column);
+        if (on)
+        {
+            // Pizza/rosca só fazem sentido com uma série.
+            if (settings.Kind is ChartKind.Pie or ChartKind.Doughnut) settings.YColumns.Clear();
+            settings.YColumns.Add(column);
+            if (settings.Aggregation == Aggregation.Count) settings.Aggregation = Aggregation.Sum;
+        }
+        Recompute();
+    }
+
+    private void SetLabel(string column, string? label)
+    {
+        if (string.IsNullOrWhiteSpace(label) || label == column) labels.Remove(column);
+        else labels[column] = label.Trim();
+        chartData = chartData is null ? null : chartData with { }; // força redesenho com os novos rótulos
+    }
+
+    private async Task SaveChart()
+    {
+        await Datasets.SaveChartSettingsAsync(userId, Id, settings, labels);
+        savedMessage = "Configuração salva ✔";
+    }
+
+    private async Task ExportChart()
+    {
+        if (chartView is null) return;
+        var name = string.Join("_", settings.Title.Split(Path.GetInvalidFileNameChars().Append(' ').ToArray(), StringSplitOptions.RemoveEmptyEntries));
+        await chartView.ExportPngAsync($"{(name.Length > 0 ? name : "grafico")}.png");
+    }
+
+    private void StartEditDetails()
+    {
+        editName = dataset!.Name;
+        editDescription = dataset.Description;
+        editingDetails = true;
+    }
+
+    private async Task SaveDetails()
+    {
+        if (string.IsNullOrWhiteSpace(editName)) return;
+        var name = editName.Trim();
+        var description = string.IsNullOrWhiteSpace(editDescription) ? null : editDescription.Trim();
+        await Datasets.UpdateDetailsAsync(userId, Id, name, description);
+        dataset!.Name = name;
+        dataset.Description = description;
+        editingDetails = false;
+    }
+
+    private async Task ToggleFavorite() => dataset!.IsFavorite = await Datasets.ToggleFavoriteAsync(userId, Id);
+
+    private async Task DeleteDataset()
+    {
+        await Datasets.DeleteAsync(userId, Id);
+        Navigation.NavigateTo("historico");
+    }
+
+    private async Task DownloadCsv()
+    {
+        // BOM UTF-8 para o Excel abrir acentos corretamente.
+        await JS.InvokeVoidAsync("dashtudo.downloadText", $"{dataset!.Name}.csv", "﻿" + data!.ToCsv(), "text/csv;charset=utf-8");
+    }
+
+    // ---------- Dados ----------
+    private IQueryable<string?[]> FilteredRows
+    {
+        get
+        {
+            var rows = data!.Rows.AsQueryable();
+            if (string.IsNullOrWhiteSpace(rowFilter)) return rows;
+            var f = rowFilter.Trim();
+            return rows.Where(r => r.Any(v => v != null && v.Contains(f, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
+    private static GridSort<string?[]> SortFor(int idx, ColumnType type) => type == ColumnType.Number
+        ? GridSort<string?[]>.ByAscending(r => DataAnalysisService.NumberOrMin(r[idx]))
+        : GridSort<string?[]>.ByAscending(r => r[idx] ?? "");
+
+    private static string FormatCell(string? v, ColumnType type) =>
+        type == ColumnType.Number && DataAnalysisService.TryNumber(v, out var n) ? ValueParser.FormatNumber(n) : v ?? "";
+
+    private static string N(double? v) => v is null ? "" : ValueParser.FormatNumber(v.Value);
+
+    private static string TypeLabel(ColumnType t) => t switch
+    {
+        ColumnType.Number => "Número",
+        ColumnType.Date => "Data",
+        _ => "Texto",
+    };
+
+    // ---------- IA ----------
+    private async Task Generate(ReportKind kind)
+    {
+        if (generating || dataset is null || data is null) return;
+        aiError = null;
+        if (Ai.DailyLimit > 0 && reportsToday >= Ai.DailyLimit)
+        {
+            aiError = $"Você atingiu o limite de {Ai.DailyLimit} análises de IA por dia. Tente novamente amanhã.";
+            return;
+        }
+
+        generating = true;
+        generatingKind = kind;
+        streamingText = "";
+        generationCts = new CancellationTokenSource();
+        var q = kind == ReportKind.Question ? question.Trim() : null;
+        var lastRender = DateTime.UtcNow;
+
+        try
+        {
+            var result = await Ai.GenerateAsync(
+                new AiReportRequest(dataset, data, originalFile, profiles, kind, q),
+                async delta =>
+                {
+                    streamingText += delta;
+                    // Limita re-renderizações durante o streaming (~8 por segundo).
+                    if ((DateTime.UtcNow - lastRender).TotalMilliseconds > 120)
+                    {
+                        lastRender = DateTime.UtcNow;
+                        await InvokeAsync(StateHasChanged);
+                    }
+                },
+                generationCts.Token);
+
+            var markdown = result.Warning is null ? result.Markdown : $"> ℹ️ {result.Warning}\n\n{result.Markdown}";
+            var saved = await Datasets.AddReportAsync(userId, new AiReport
+            {
+                DatasetId = dataset.Id,
+                Kind = kind,
+                Question = q,
+                ContentMarkdown = markdown,
+                Model = result.Model,
+                InputTokens = result.InputTokens,
+                OutputTokens = result.OutputTokens,
+            });
+            reports.Insert(0, saved);
+            expandedReportId = saved.Id;
+            reportsToday++;
+            streamingText = null;
+            if (kind == ReportKind.Question) question = "";
+        }
+        catch (AiException ex)
+        {
+            aiError = ex.Message;
+            streamingText = null;
+        }
+        catch (OperationCanceledException)
+        {
+            aiError = "Geração interrompida.";
+            streamingText = null;
+        }
+        finally
+        {
+            generating = false;
+            generationCts?.Dispose();
+            generationCts = null;
+        }
+    }
+
+    private void CancelGeneration() => generationCts?.Cancel();
+
+    private async Task CopyReport(AiReport r) => await JS.InvokeAsync<bool>("dashtudo.copyText", r.ContentMarkdown);
+
+    private async Task DownloadReport(AiReport r) =>
+        await JS.InvokeVoidAsync("dashtudo.downloadText", $"{dataset!.Name} - {AiInsightsService.KindLabel(r.Kind)}.md", r.ContentMarkdown, "text/markdown;charset=utf-8");
+
+    private async Task DeleteReport(AiReport r)
+    {
+        await Datasets.DeleteReportAsync(userId, r.Id);
+        reports.Remove(r);
+    }
+
+    public void Dispose()
+    {
+        generationCts?.Cancel();
+        generationCts?.Dispose();
+    }
+}
