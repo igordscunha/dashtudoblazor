@@ -26,12 +26,6 @@ public class AppDbContext(DbContextOptions<AppDbContext> options) : IdentityDbCo
             e.ToTable("Users");
             e.Property(u => u.FirstName).HasMaxLength(100);
             e.Property(u => u.LastName).HasMaxLength(100);
-            // O MySql.Data não suporta GetFieldValue<DateOnly>: a coluna "date" volta como DateTime e o cast falha.
-            e.Property(u => u.BirthDate)
-                .HasColumnType("date")
-                .HasConversion(
-                    d => d.HasValue ? d.Value.ToDateTime(TimeOnly.MinValue) : (DateTime?)null,
-                    d => d.HasValue ? DateOnly.FromDateTime(d.Value) : null);
         });
 
         builder.Entity<Dataset>(e =>

@@ -10,7 +10,6 @@ using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Migrations;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,8 +21,7 @@ builder.Services.AddRazorComponents()
 var connectionString = builder.Configuration.GetConnectionString("Default")
     ?? throw new InvalidOperationException("Connection string 'Default' não configurada.");
 builder.Services.AddDbContextFactory<AppDbContext>(o => o
-    .UseMySQL(connectionString)
-    .ReplaceService<IHistoryRepository, MariaDbCompatibleHistoryRepository>()); // funciona em MySQL e MariaDB
+    .UseMySql(connectionString, ServerVersion.AutoDetect(connectionString)));
 // O Identity precisa de um DbContext "scoped"; reaproveita a mesma configuração da factory.
 builder.Services.AddScoped(sp => sp.GetRequiredService<IDbContextFactory<AppDbContext>>().CreateDbContext());
 
